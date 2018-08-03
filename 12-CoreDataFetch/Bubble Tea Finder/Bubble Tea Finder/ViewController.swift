@@ -39,6 +39,8 @@ class ViewController: UIViewController {
   var coreDataStack: CoreDataStack!
   var fetchRequest: NSFetchRequest<Venue>?
   var venues:[Venue] = []
+  var asyncFetchRequest: NSAsynchronousFetchRequest<Venue>?
+  
   
 
   // MARK: - IBOutlets
@@ -47,11 +49,35 @@ class ViewController: UIViewController {
   // MARK: - View Life Cycle
   override func viewDidLoad() {
     super.viewDidLoad()
-    guard let model = coreDataStack.managedContext.persistentStoreCoordinator?.managedObjectModel, let fetchRequest = model.fetchRequestTemplate(forName: "FetchRequest") as? NSFetchRequest<Venue> else{
-      return
-    }
+//    let batchDelete = NSBatchDeleteRequest(entityName:"Venue")
     
-    self.fetchRequest = fetchRequest
+    let batchUpdate = NSBatchUpdateRequest(entityName: "Venue")
+    batchUpdate.propertiesToUpdate = [#keyPath(Venue.favorite): true]
+    
+    batchUpdate.affectedStores = coreDataStack.managedContext.persistentStoreCoordinator?.persistentStores
+    batchUpdate.resultType = .updatedObjectsCountResultType
+    do{
+      let batchResult = try coreDataStack.managedContext.execute(batchUpdate) as! NSBatchUpdateResult
+      print("Records updated \(batchResult.result!)")
+    }catch let error as NSError { print("Could not update \(error), \(error.userInfo)") }
+    
+    let venueFetchRequest:NSFetchRequest<Venue> = Venue.fetchRequest()
+    self.fetchRequest = venueFetchRequest
+    asyncFetchRequest = NSAsynchronousFetchRequest<Venue>(fetchRequest: venueFetchRequest, completionBlock: { [unowned self] (result: NSAsynchronousFetchResult) in
+      guard let venues = result.finalResult else {
+        return
+      }
+      self.venues = venues
+      self.tableView.reloadData()
+    })
+    
+    do{
+      guard let asyncFetchRequest = asyncFetchRequest else{
+        return
+      }
+      try coreDataStack.managedContext.execute(asyncFetchRequest)
+    }catch let error as NSError { print("Could not fetch \(error), \(error.userInfo)") }
+    
     fetchAndReload()
   }
 
@@ -61,6 +87,7 @@ class ViewController: UIViewController {
       return
     }
     filterVC.coreDataStack = coreDataStack
+    filterVC.delegate = self
   }
 }
 
@@ -103,4 +130,20 @@ extension ViewController: UITableViewDataSource {
     cell.detailTextLabel?.text = venue.priceInfo?.priceCategory
     return cell
   }
+}
+extension ViewController: FilterViewControllerDelegate{
+  func filterViewController(filter: FilterViewController, didSelectPredicate predicate: NSPredicate?, sortDescriptor: NSSortDescriptor?) {
+    guard let fetchRequest = fetchRequest else{
+      return
+    }
+    fetchRequest.predicate = nil
+    fetchRequest.sortDescriptors =  nil
+    fetchRequest.predicate = predicate
+    if let sr = sortDescriptor{
+      fetchRequest.sortDescriptors = [sr]
+    }
+    fetchAndReload()
+  }
+  
+  
 }
